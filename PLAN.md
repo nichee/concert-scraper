@@ -7,7 +7,7 @@ I follow a lot of artists on Spotify, including niche ones. Spotify's concert di
 ## Goal
 
 Build a scraper that:
-1. Takes a list of artist names (hardcoded to start, Spotify API later)
+1. Takes a list of artists derived from Spotify (followed + top + liked songs)
 2. Fans out across multiple concert/ticketing platforms
 3. Deduplicates results
 4. Filters for Singapore / SEA events
@@ -15,46 +15,61 @@ Build a scraper that:
 
 ---
 
+## Artist List Strategy
+
+Artists are sourced from Spotify in tiers, saved to `data/artists.json` (Tier 1+2) and `data/artists_tier3.json` (noise):
+
+| Tier | Sources | Signal |
+|---|---|---|
+| **1** | Followed artists, top artists short term | Explicit intent + recent listening |
+| **2** | Top artists medium/long term, liked songs (3+ tracks) | Consistent history |
+| **3** | Liked songs (1-2 tracks), playlist artists | Too noisy — saved separately |
+
+---
+
 ## Data Sources
 
-### Tier 1 — High value, relatively easy to scrape
+### Priority 1 — Build these first
 
-| Source | Notes |
+| Source | Method | Notes |
+|---|---|---|
+| **Bandsintown** | API or scrape artist pages | Artists self-submit — best niche coverage. Try `rest.bandsintown.com/artists/{name}/events` first. |
+| **DICE.fm** | Scrape (Playwright) | Where SG indie/alternative promoters list shows. No public API. JS-rendered. |
+| **Resident Advisor** | Scrape | Good for electronic/experimental. Covers SG well. |
+
+### Priority 2 — Add after Priority 1
+
+| Source | Method | Notes |
+|---|---|---|
+| **Eventbrite** | Scrape search page | API killed in 2020. Still worth scraping for mid-size acts. |
+| **Songkick** | Scrape artist pages | API locked for hobbyists. Public artist pages are scrapable. |
+| **Venue websites** | Scrape upcoming pages | The Projector, Esplanade, Timbre, Decline Effect, Eat At Seven. Scan for artist name matches. |
+
+### Deprioritised
+
+| Source | Reason |
 |---|---|
-| **Peatix** | Server-rendered HTML. Search: `peatix.com/search?q={artist}`. Popular in SG/SEA for indie gigs. |
-| **Eventbrite** | Search API deprecated in 2020 — scrape the search page (`eventbrite.sg`). Catches mid-size indie acts. |
-| **DICE.fm** | No public API. Popular for indie/alternative in SG. Client-side rendered — needs Playwright. |
-
-### Tier 2 — Worth it, slightly harder
-
-| Source | Notes |
-|---|---|
-| **Bandsintown** | Artist pages are public (`bandsintown.com/{artist}`). API access is locked for hobbyists, but scraping the public pages works. Artists self-submit — good niche coverage. |
-| **Songkick** | Same situation — API requires partnership agreement. Scrape artist pages instead. |
-| **Venue websites** | Maintain a list of SG venues (The Projector, Esplanade, Timbre, Decline Effect, Eat At Seven) and scan their upcoming event pages for artist name matches. |
-
-### Tier 3 — Very hard, skip for now
-
-| Source | Notes |
-|---|---|
-| Facebook Events / Instagram | Where promoters actually post, but aggressive bot detection and login walls. Not worth it early on. |
+| **Peatix** | Heavily Japan-biased search results. `l.country=SG` param does nothing. Very few SG results for niche Western acts. Low ROI. |
+| **Facebook / Instagram** | Aggressive bot detection, login walls. Not worth it. |
 
 ---
 
 ## Architecture
 
 ```
-Hardcoded artist list (→ Spotify API later)
+Spotify OAuth → Tier 1+2 artist list (data/artists.json)
         ↓
-Fan out in parallel to all scrapers
+Fan out per artist to all scrapers (with delay to avoid rate limiting)
         ↓
-Fuzzy match artist names (rapidfuzz) against event listings
+Filter: Singapore / SEA only (timezone + lat/lng bounding box)
         ↓
-Deduplicate (same event from multiple sources)
+Fuzzy match artist name against event title (rapidfuzz, threshold 80)
         ↓
-Filter: Singapore / SEA only
+Deduplicate across sources
         ↓
-Output / notify (TBD)
+Save to results/YYYY-MM-DD_HH-MM-SS.json
+        ↓
+Notify (TBD: Telegram bot or email digest)
 ```
 
 ---
@@ -62,49 +77,46 @@ Output / notify (TBD)
 ## Stack
 
 - **Language:** Python
-- **HTTP:** `httpx` (async) or `requests`
+- **HTTP:** `httpx`
 - **Parsing:** `BeautifulSoup` for static HTML, `Playwright` for JS-heavy sites (DICE)
-- **Fuzzy matching:** `rapidfuzz` — handles "Black Country New Road" vs "Black Country New Road w/ support act"
+- **Fuzzy matching:** `rapidfuzz` (`partial_ratio`, threshold 80)
+- **Rate limiting:** 0.5s delay between requests per artist, jitter if needed
 - **Scheduling:** cron job, daily or weekly
-- **Notifications:** Telegram bot (zero frontend work) or email digest — TBD
+- **Notifications:** Telegram bot or email digest — TBD
 
 ---
 
 ## Phases
 
-### Phase 1 — Scaffold + first scraper
-- [ ] Set up project structure (venv, dependencies)
-- [ ] Hardcode a test artist list (10–15 artists you follow)
-- [ ] Build Peatix scraper (easiest, server-rendered)
-- [ ] Print matched events to stdout
+### Phase 1 — Scaffold + Peatix scraper ✅
+- [x] Set up project structure (venv, dependencies)
+- [x] Spotify OAuth → pull artist list by tier into `data/artists.json`
+- [x] Peatix scraper (hits JSON API, SG filter via timezone + lat/lng)
+- [x] Save results to `results/` as timestamped JSON
 
-### Phase 2 — More sources
-- [ ] Add Eventbrite scraper
-- [ ] Add DICE.fm scraper (Playwright)
-- [ ] Add Bandsintown scraper
-- [ ] Add Songkick scraper
+### Phase 2 — Better sources
+- [ ] Bandsintown scraper (most important — try API first, fall back to scraping)
+- [ ] DICE.fm scraper (Playwright)
+- [ ] Resident Advisor scraper
+- [ ] Eventbrite scraper
 
 ### Phase 3 — Intelligence layer
-- [ ] Fuzzy matching with `rapidfuzz`
-- [ ] Deduplication logic
-- [ ] Location filtering (SG / SEA)
-- [ ] Optional: LLM pass to summarize/clean up event descriptions
+- [ ] Deduplication (same event from multiple sources)
+- [ ] Optional: LLM pass for digest generation or extracting structured data from messy descriptions
 
 ### Phase 4 — Automation & notification
 - [ ] Cron job or scheduler
 - [ ] Telegram bot or email digest
-- [ ] Spotify OAuth → replace hardcoded artist list with followed artists
 
 ### Phase 5 — Venue-level scraping
 - [ ] Maintain SG venue list
-- [ ] Scrape venue "upcoming" pages
-- [ ] Match against artist list
+- [ ] Scrape venue "upcoming" pages, match against artist list
 
 ---
 
 ## Notes
 
-- **Fuzzy matching is critical.** Artist names appear differently across platforms. Use `rapidfuzz` with a threshold (e.g. 85% similarity).
-- **LLM as summarizer:** Could use Claude API to clean up scraped event blurbs, extract structured data (date, venue, price), or generate a readable digest. Good addition in Phase 3+.
-- **Spotify API:** `GET /v1/me/following?type=artist` gives your full followed artist list. OAuth flow needed. Add in Phase 4 once the core scraping works.
-- **Bandsintown:** The public API (`rest.bandsintown.com/artists/{name}/events`) is loosely enforced — may be worth trying before scraping their pages.
+- **Peatix lesson:** Don't assume a platform is useful without testing. `l.country=SG` param did nothing — all results were Japanese events. SG filtering had to be done client-side via `timezone_id` and lat/lng bounding box.
+- **LLM as judge:** Not needed for relevance filtering — fuzzy matching handles that. More useful for deduplication across sources and generating readable digests. Defer to Phase 3.
+- **Bandsintown public API:** `rest.bandsintown.com/artists/{name}/events?app_id=YOUR_ID` — loosely enforced for personal projects. Worth trying before scraping their HTML pages.
+- **Fuzzy matching is critical.** Artist names appear differently across platforms. `rapidfuzz.partial_ratio` at threshold 80 works well.

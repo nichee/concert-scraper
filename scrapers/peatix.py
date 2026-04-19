@@ -7,15 +7,32 @@ HEADERS = {
     "Accept": "application/json, text/javascript, */*",
     "X-Requested-With": "XMLHttpRequest",
 }
-MATCH_THRESHOLD = 80  # minimum fuzzy match score (0-100)
+MATCH_THRESHOLD = 80
+
+# Singapore bounding box
+SG_LAT = (1.15, 1.48)
+SG_LNG = (103.6, 104.1)
 
 
-def search(artist: str, country: str = "SG") -> list[dict]:
-    """Search Peatix for events matching an artist name. Returns matched events."""
+def _is_singapore(event: dict) -> bool:
+    if event.get("timezone_id") == "Asia/Singapore":
+        return True
+    latlng = event.get("latlng", "")
+    if latlng:
+        try:
+            lat, lng = map(float, latlng.split(","))
+            return SG_LAT[0] <= lat <= SG_LAT[1] and SG_LNG[0] <= lng <= SG_LNG[1]
+        except ValueError:
+            pass
+    return False
+
+
+def search(artist: str) -> list[dict]:
+    """Search Peatix for Singapore events matching an artist name."""
     try:
         r = httpx.get(
             SEARCH_URL,
-            params={"q": artist, "l.country": country},
+            params={"q": artist},
             headers=HEADERS,
             follow_redirects=True,
             timeout=10,
@@ -28,6 +45,8 @@ def search(artist: str, country: str = "SG") -> list[dict]:
     events = r.json().get("json_data", {}).get("events", [])
     matched = []
     for event in events:
+        if not _is_singapore(event):
+            continue
         name = event.get("name", "")
         score = fuzz.partial_ratio(artist.lower(), name.lower())
         if score >= MATCH_THRESHOLD:
